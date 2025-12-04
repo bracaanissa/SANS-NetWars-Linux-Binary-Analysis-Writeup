@@ -1,215 +1,230 @@
-# 🐧 SANS NetWars **Linux Binary Analysis** — Henchman Malware Walkthrough  
-*A structured technical walkthrough documenting my methodology, commands, and analysis across the staged “henchman” malware challenges.*
+# 🧠 SANS NetWars — Linux Binary Analysis Write-Up  
+*A complete walkthrough of each challenge (Q1–Q7), commands used, methodology, and key takeaways — with **all flags removed**, per SANS ethical guidelines.*
 
 ---
 
 ## ⚠️ Disclaimer
-This repository contains **educational write-ups** from a SANS NetWars training environment.  
-All binaries, users, files, ports, and processes referenced existed **only inside an isolated CTF sandbox**.
-
-- **No flags are included.**  
-- **No proprietary SANS challenge text is included.**  
-- All techniques shown were used legally and ethically within the training VM.
-
-This write-up exists solely to document **learning**, **analysis workflow**, and **Linux malware techniques**.
+This write-up documents **educational, non-flag, non-proprietary** analysis performed inside an **isolated SANS NetWars CTF environment**.  
+Nothing here applies to real systems, and **all flags and challenge content are intentionally removed**.
 
 ---
 
-## 📚 Table of Contents
+# 📚 Table of Contents
 - [Overview](#overview)
-- [Environment Setup](#environment-setup)
-- [Linux Challenges](#linux-challenges)
-  - [1. Process Identification](#1-process-identification)
-  - [2. Binary Hashing](#2-binary-hashing)
-  - [3. Binary Interaction](#3-binary-interaction)
-  - [4. Permission Manipulation](#4-permission-manipulation)
-  - [5. TCP Socket Enumeration](#5-tcp-socket-enumeration)
-  - [6. Hidden Temporary File Forensics](#6-hidden-temporary-file-forensics)
-  - [7. Sleep Process Termination](#7-sleep-process-termination)
-- [Core Skills Practiced](#core-skills-practiced)
-- [Repository Structure](#repository-structure)
+- [Challenge Walkthrough](#challenge-walkthrough)
+  - [Q1 — Identify the Malware Process](#q1--identify-the-malware-process)
+  - [Q2 — Obtain the MD5 Hash](#q2--obtain-the-md5-hash)
+  - [Q3 — Interact With the Malware Binary](#q3--interact-with-the-malware-binary)
+  - [Q4 — Fix Permissions & Ownership](#q4--fix-permissions--ownership)
+  - [Q5 — Connect via TCP Socket](#q5--connect-via-tcp-socket)
+  - [Q6 — Extract the Secret Temporary File](#q6--extract-the-secret-temporary-file)
+  - [Q7 — Kill the Child Sleep Process](#q7--kill-the-child-sleep-process)
+- [Key Takeaways](#key-takeaways)
 - [Notes About SANS Writeups](#notes-about-sans-writeups)
+- [Author](#author)
+- [End of Write-Up](#end-of-write-up)
 
 ---
 
-## 📝 Overview
-This walkthrough documents my analysis of the **henchman malware binary** inside a Linux-based SANS NetWars environment.  
-The challenges required me to:
+# 📝 Overview
+This repository documents my full technical process while solving the **Linux Binary Analysis** challenge sequence inside SANS NetWars.
 
-- Identify malicious processes  
-- Extract executable artifacts  
-- Manipulate file permissions & sticky bits  
-- Communicate with malware over TCP  
-- Reverse-engineer runtime behavior  
-- Interact with hidden files created by the malware  
-- Work with multiple Linux users and tmux panes  
+Skills used:
+- Linux malware analysis  
+- `/proc` forensics  
+- Local socket analysis  
+- Privilege switching with `sudo -u`  
+- File permissions, sticky bits, ownership  
+- Multi-pane tmux operations  
+- Network interaction (`ss`, `nc`)  
+- Process inspection (`ps`, `lsof`)
 
-This README highlights the **technical approach**, **commands used**, and **lessons learned** — without revealing any challenge answers.
-
----
-
-## 🖥️ Environment Setup
-The CTF environment included:
-
-- A Linux VM with users:
-  - `cyberus` (primary user)
-  - `henchman`
-  - `henchman_advisor`
-- `sudo -u <user>` enabled for cross-user interactions  
-- `/proc/<pid>`–based binary extraction  
-- tmux multi-pane workflow (`CTRL + b + o`)
-
-All analysis was performed entirely within the environment.
+**All flags are omitted.**
 
 ---
 
-# 🧩 Linux Challenges
+# 🧩 Challenge Walkthrough
 
 ---
 
-## 1. Process Identification
-Goal: Identify the running malware process owned by the `henchman` user.
+## **Q1 — Identify the Malware Process**
 
-Commands used:
+Used `ps` to find active processes under user `henchman`:
+
 ```bash
 ps -u henchman -o pid,cmd
-This revealed the malware executable running under a specific PID with a suspicious command.
+```
 
-2. Binary Hashing
-Goal: Obtain an MD5 hash of the running binary.
+Results revealed: 
+```bash
+./henchman
+```
 
-Key steps:
+---
 
-Identify the executable through /proc/<pid>/exe
+## **Q2 — Obtain the MD5 Hash**
+Because the binary is owned by `henchman`, reading `/proc/<PID>/exe` required switching users:
 
-Use sudo -u henchman to bypass permission restrictions
+```bash
+sudo -u henchman md5sum /proc/<PID>/exe | awk '{print $1}'
+```
 
-Example approach:
+---
 
-bash
-Copy code
-sudo -u henchman md5sum /proc/<PID>/exe
-3. Binary Interaction
-Goal: Run and interact with a copy of the binary.
+## **Q3 — Interact With the Malware Binary**
+Copied executable from `/proc` to run interactively:
 
-Process:
-
-Extract executable from /proc/<pid>/exe
-
-Copy into /tmp for safe execution
-
-Run as the correct user
-
-Example:
-
-bash
-Copy code
+```bash
 sudo -u henchman cp /proc/<PID>/exe /tmp/henchman.bin
+sudo -u henchman chmod +x /tmp/henchman.bin
 sudo -u henchman /tmp/henchman.bin
-Tested common inputs (help, hello, etc.) until the binary responded.
+```
 
-4. Permission Manipulation
-One stage required modifying:
+Binary accepted input such as:
 
-Ownership
+```bash
+help  
+hello  
+getflag
+```
 
-Sticky bits
+---
 
-Execute permissions
+## **Q4 — Fix Permissions & Ownership**
+Binary required very specific permissions before continuing:
 
-Using:
+- Owner: r/w/e
+- Group: r/x
+- Everyone: r/w/e
+- Sticky bit set
+- Must be owned by user `henchman_advisor`
 
-bash
-Copy code
-chown <user>:<group> henchman.bin
+Commands:
+
+```bash
+sudo -u henchman_advisor bash
+cp /tmp/henchman.bin ~/
+cd ~
+chown henchman_advisor:henchman_advisor henchman.bin
 chmod 1757 henchman.bin
-This unlocked the next interaction phase.
+./henchman.bin
+```
 
-5. TCP Socket Enumeration
-When the malware started a TCP listener, I identified its port via:
+---
 
-bash
-Copy code
+## **Q5 — Connect via TCP Socket**
+The binary opened a local port and waited for a “password.”
+
+Find port:
+
+```bash
 sudo -u henchman_advisor ss -ltnp | grep henchman
-Then connected to it:
+```
 
-bash
-Copy code
+Connect:
+
+```bash
 nc 127.0.0.1 <port>
-This allowed further communication with the malware.
+```
+Send the requested password.
 
-6. Hidden Temporary File Forensics
-At one stage the malware stated it had a file “open”.
+---
 
-Used:
+## **Q6 — Extract the Secret Temporary File**
+The running binary created a hidden file in `/tmp`.
 
-bash
-Copy code
-sudo -u henchman_advisor lsof -p <PID>
-A temporary hidden file (e.g., /tmp/.randomsecret) became visible.
+Locate it:
 
-The workflow:
+```bash
+sudo -u henchman_advisor lsof -p <PID> | grep /tmp
+```
 
-cat the file
+Example result:
 
-Send its contents back via nc to the malware socket
+```bash
+/tmp/.5ecr3t
+```
 
-7. Sleep Process Termination
-A later stage required terminating a specific child process (usually a long-running sleep).
+Read it:
 
-Enumeration:
+```bash
+sudo -u henchman_advisor cat /tmp/.5ecr3t
+```
 
-bash
-Copy code
+Send its contents back to the binary’s socket:
+
+```bash
+cat /tmp/.5ecr3t | nc 127.0.0.1 <port>
+```
+
+---
+
+## **Q7 — Kill the Child Sleep Process**
+Binary spawned a long-running `sleep` process that needed to be killed.
+
+Find it in the unused tmux pane:
+
+```bash
 ps aux | grep sleep
-Termination:
+```
 
-bash
-Copy code
+Kill it:
+
+```bash
 sudo kill <PID>
-This triggered the malware to continue to the next stage.
+```
 
-🧠 Core Skills Practiced
-✔ Linux Process Analysis
-ps, lsof, /proc/<pid>, open file handles
+# 🧠 Key Takeaways
 
-✔ Privilege Separation
-sudo -u <user>, user home directories, permissions
+### ✔ Linux privilege separation matters  
+Switching users with `sudo -u` was critical — each stage required interacting as the correct user.
 
-✔ File Permissions & Sticky Bits
-chmod 1757, chown user:group
+### ✔ `/proc` is a forensic goldmine  
+Used to access:  
+- Executables  
+- Sockets  
+- File descriptors  
+- Environment variables  
 
-✔ Socket Communication
-ss -ltnp, nc, TCP message passing
+### ✔ `lsof` reveals everything  
+Essential for:  
+- Hidden temp file discovery  
+- Socket monitoring  
+- File descriptor tracing  
 
-✔ Binary Extraction
-Copying executables from /proc/<pid>/exe
+### ✔ Realistic DFIR workflows  
+Multi-pane tmux forced:  
+- File monitoring  
+- Live binary interaction  
+- Timed responses  
 
-✔ tmux Operations
-Switching panes with CTRL + b + o
+### ✔ Malware behavior simulation  
+This challenge introduced:  
+- Local TCP listeners  
+- Hidden temp files  
+- Time-delayed tasks  
+- Child process monitoring  
 
-✔ Malware Behavior Understanding
-Observing dynamic runtime behavior and interaction prompts
+---
 
-📁 Repository Structure
-bash
-Copy code
-.
-├── README.md         # Main writeup
-├── notes/            # Optional challenge notes
-├── commands/         # Raw command logs (no flags)
-└── artifacts/        # Binary analysis auxiliary files
-📝 Notes About SANS Writeups
-SANS allows public writeups as long as:
+# 📝 Notes About SANS Writeups
 
-You exclude flags
+SANS allows educational writeups as long as:
 
-You exclude challenge text
+- ❗ **Flags are not posted**  
+- ❗ **Challenge text is not copied verbatim**  
+- ❗ **No exam / graded content is revealed**
 
-You include only your methodology
+This write-up complies with all SANS guidelines.
 
-You do not reproduce exam or graded material
+---
 
-This repository complies fully with these requirements.
+# ✍️ Author
 
-✔️ End of Write-Up
+**Anissa Braca**  
+Emerging Cybersecurity Professional  
+Documenting NetWars progression & Linux binary analysis practice.
+
+---
+
+# ✔️ End of Write-Up
